@@ -1,5 +1,6 @@
-import CUDArt
+import CUDArt, CUDAdrv
 using Base.Test
+import Compat.view
 
 #########################
 # Device init and close #
@@ -80,7 +81,7 @@ result = CUDArt.devices(dev->CUDArt.capability(dev)[1] >= 2, nmax=1) do devlist
         g64 = AT(Float64, (5,3))
         copy!(g64, h32)
         # AbstractArray fallbacks
-        s32 = sub(h32, 5:-1:1, :)
+        s32 = view(h32, 5:-1:1, :)
         copy!(g64, s32)
     end
     # Getting portions of an array
@@ -120,7 +121,11 @@ result = CUDArt.devices(dev->CUDArt.capability(dev)[1] >= 2, nmax=1) do devlist
 #     @test A[2,2] == 3  # asynchronous
     CUDArt.device_synchronize()
     @test A[2,2] == 7
-    S = pointer_to_array(pointer(A)+48, (6,2), false)  # a "SubArray"
+    if VERSION < v"0.5.0-dev+4597"
+        S = pointer_to_array(pointer(A)+48, (6,2), false)  # a "SubArray"
+    else
+        S = unsafe_wrap(Array, pointer(A)+48, (6,2), false)  # a "SubArray"
+    end
     B = rand(map(Int32, 1:15), 6, 2)
     GB = CUDArt.CudaArray(B)
     copy!(S, GB)
@@ -146,24 +151,8 @@ result = CUDArt.devices(dev->CUDArt.capability(dev)[1] >= 2, nmax=1) do devlist
     # Issue #41
     a = CUDArt.CudaArray(zeros(2))
     @test func41(a, (2,1,1,1)) == Cint[2,1,1,1]
-end
-
-#####################
-# Executing kernels #
-#####################
-result = CUDArt.devices(dev->CUDArt.capability(dev)[1] >= 2, nmax=1) do devlist
-    CUDArt.device(devlist[1])
-    a = rand(Float32, 3, 4)
-    b = rand(Float32, 3, 4)
-    c = CUDArt.CuModule("vadd.ptx") do md
-        vadd = CUDArt.CuFunction(md, "vadd")
-        ga = CUDArt.CudaArray(a)
-        gb = CUDArt.CudaArray(b)
-        gc = CUDArt.CudaArray(Float32, size(a))
-        CUDArt.launch(vadd, length(a), 1, (ga, gb, gc))
-        CUDArt.to_host(gc)
-    end
-    @test_approx_eq c (a+b)
+    # Comment in PR #50
+    CUDArt.cudasleep(1)
 end
 
 gc()  # check for finalizer errors
